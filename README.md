@@ -1,339 +1,575 @@
-# Claude Code hooks: PermissionRequest and Notification
+# Claude Code Permission Review System
 
-This doc explains how the two hooks work, what they receive on stdin, what you can output, and how to run/debug them in a real WSL/Linux + Windows toast setup. 
+A comprehensive permission review and security monitoring system for Claude Code (VS Code with Claude AI integration). This toolkit provides automated whitelist/blacklist filtering, AI-powered security review, and detailed logging of all tool execution requests.
 
-## What hooks are
+## What Does This Do?
 
-Hooks are user-defined commands that Claude Code runs at specific lifecycle points. They receive JSON on **stdin** and communicate back via **stdout**, **stderr**, and **exit code**. 
+When Claude Code wants to execute a tool (run bash commands, edit files, etc.), this system:
 
-## Common fields you usually get on stdin
+1. **Checks whitelist** - Auto-approves trusted operations
+2. **Checks blacklist** - Auto-denies dangerous operations  
+3. **AI Security Review** - Uses Claude Opus to review uncertain operations
+4. **Logs everything** - Records all decisions in JSON format for audit and analysis
+5. **Sends notifications** - Alerts you when manual review is needed (Windows toast notifications)
 
-Most hook events include some or all of these fields (exact set depends on event):
+This gives you granular control and visibility over what Claude is doing in your workspace.
 
-* `session_id`
-* `transcript_path` (path to session transcript `.jsonl`)
-* `cwd`
-* `permission_mode`
-* `hook_event_name`
+## Components
 
+### Core Scripts
 
+#### `permission-review.sh` 
+**The main permission review hook**
 
-## PermissionRequest hook
+This script intercepts every tool call Claude makes and decides whether to allow, deny, or ask for manual approval.
 
-### When it fires
+**Decision Flow:**
+```
+Tool Call Request
+    ↓
+Whitelist Check → Auto-approve if matched
+    ↓
+Blacklist Check → Auto-deny if matched
+    ↓
+MCP Write Detection → Ask user for external service modifications
+    ↓
+AI Security Review → Claude Opus analyzes the request
+    ↓
+{approve, deny, ask} → Log decision + Execute or block
+```
 
-Runs when Claude Code is about to show the user a permission dialog (the “allow this tool?” moment). 
+**Features:**
+- Pattern matching with wildcards (`*`, `?`)
+- Content-aware filtering (e.g., `Bash:git *` matches git commands)
+- Structured JSON logging to `~/.claude/logs/permission-review.jsonl`
+- Windows toast notifications for manual review requests
+- AI reviewer using Claude Opus 4.5 with security-focused prompts
 
-### What it’s for
+#### `notify-wrapper.sh`
+**Notification hook for Windows (WSL)**
 
-Deterministically decide on the user’s behalf:
+Captures notification events from Claude and displays them as Windows toast notifications using PowerShell's BurntToast module.
 
-* allow automatically
-* deny automatically with a message (optionally interrupt)
-* otherwise do nothing and let the normal UI prompt happen
+**Features:**
+- Logs all notifications to `~/.claude/logs/notification.log`
+- Shows project context in notification messages
+- Tracks notification timing and duration
+- Returns context to Claude for awareness
 
-Claude Code calls this “decision control” for `PermissionRequest`. 
+#### `analyze-permissions.sh`
+**Log analysis and whitelist recommendation tool**
 
-### Input (stdin)
+Analyzes the permission review JSON logs to help you optimize your whitelist/blacklist rules.
 
-`PermissionRequest` receives JSON via stdin (same general hook input mechanism). The exact schema is documented in the hook reference page.
+**Output includes:**
+- Total permission requests and decision breakdown
+- Top 10 most used tools
+- Whitelist candidates (tools approved ≥3 times)
+- Most common approved Bash commands
+- All denied operations with reasoning
+- Suggested whitelist patterns based on usage
 
-In practice you’ll see a structure similar to the tool permission context (tool name + tool input + cwd), depending on the permission being requested.
+### Configuration Files
 
-### Output (stdout)
+#### `whitelist.txt`
+Auto-approve patterns for trusted operations.
 
-To auto-allow or auto-deny, print a JSON object with `hookSpecificOutput` and a `decision`:
+**Syntax:**
+```bash
+# Simple tool matching - approves ANY use of this tool
+ToolName
 
-Allow (optionally modify tool input):
+# Content matching - approves only when pattern matches
+ToolName:content_pattern
 
+# Examples:
+read_file                    # Always allow file reading
+Bash:git *                   # Allow all git commands
+Bash:npm test*               # Allow npm test variations
+Write:*/test/*               # Allow writes only in test directories
+```
+
+#### `blacklist.txt`
+Auto-deny patterns for dangerous operations.
+
+**Syntax:**
+```bash
+# Block specific dangerous commands
+Bash:*cat*~/.aws/credentials*
+Bash:rm -rf /*
+Bash:curl * | bash*
+
+# Block dangerous file operations
+Write:~/.ssh/*
+Edit:/etc/*
+
+# Block entire tools
+mcp_github_delete_repository
+```
+
+## Installation
+
+### Prerequisites
+
+1. **Claude CLI** - Install the Claude command-line tool
+2. **jq** - JSON processor
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install jq
+   
+   # macOS
+   brew install jq
+   ```
+3. **PowerShell BurntToast Module** (Windows only, for notifications)
+   ```powershell
+   Install-Module -Name BurntToast
+   ```
+
+### Step 1: Create Hook Directory
+
+```bash
+mkdir -p ~/.claude/hooks
+mkdir -p ~/.claude/logs
+```
+
+### Step 2: Copy Scripts
+
+Copy all scripts to the hooks directory:
+
+```bash
+cp hooks/permission-review.sh ~/.claude/hooks/
+cp hooks/notify-wrapper.sh ~/.claude/hooks/
+cp hooks/analyze-permissions.sh ~/.claude/hooks/
+cp hooks/whitelist.txt ~/.claude/hooks/
+cp hooks/blacklist.txt ~/.claude/hooks/
+```
+
+### Step 3: Make Scripts Executable
+
+```bash
+chmod +x ~/.claude/hooks/permission-review.sh
+chmod +x ~/.claude/hooks/notify-wrapper.sh
+chmod +x ~/.claude/hooks/analyze-permissions.sh
+```
+
+### Step 4: Configure Claude Code Hooks
+
+Add hook configuration to Claude's settings. The location depends on your setup:
+
+**VS Code Settings** (`settings.json`):
 ```json
 {
-  "hookSpecificOutput": {
-    "hookEventName": "PermissionRequest",
-    "decision": {
-      "behavior": "allow",
-      "updatedInput": {
-        "command": "npm run lint"
-      }
+  "claude.hooks": {
+    "permissionRequest": {
+      "command": "/home/YOUR_USERNAME/.claude/hooks/permission-review.sh"
+    },
+    "notification": {
+      "command": "/home/YOUR_USERNAME/.claude/hooks/notify-wrapper.sh"
     }
   }
 }
 ```
 
-Deny (with optional message, optional interrupt):
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PermissionRequest",
-    "decision": {
-      "behavior": "deny",
-      "message": "Reason shown to Claude/user",
-      "interrupt": true
-    }
-  }
-}
-```
-
-These fields are explicitly documented for PermissionRequest decision control. 
-
-### Exit codes
-
-Keep it simple:
-
-* exit `0` after printing valid JSON output
-* exit `0` with no output to “fall through” to normal UI permission prompt
-
-(Claude Code’s hook system uses stdout + exit behavior; the docs emphasize stdout JSON and exit behavior patterns across hooks.
-
-### Typical team patterns
-
-* Always “fall through” (manual approval) for anything that touches external services or looks destructive
-* Auto-allow only for well-known safe commands in-repo (tests, lint, formatting, read-only commands, local file edits)
-
-### Debugging PermissionRequest
-
-Minimal approach:
-
-* log raw stdin JSON
-* log parsed fields (`tool_name`, `tool_input`, `cwd`)
-* log decision + emitted JSON
-
-Your existing script approach (log file under `~/.claude/logs/`) is the right model: PermissionRequest hooks always get stdin, so logging is reliable.
-
-## Notification hook
-
-### When it fires
-
-Runs when Claude Code emits a notification event (not a tool permission decision). Common notification types include:
-
-* `permission_prompt`
-* `idle_prompt` (after extended idle time)
-* `auth_success`
-* `elicitation_dialog` (MCP tool elicitation input needed)
-
-These matchers are listed in the hook reference. 
-
-### What it’s for
-
-Side effects only:
-
-* desktop toasts
-* sound alerts
-* logging
-* bridging notifications to Slack/Teams/etc (if you want)
-
-Notification hooks **cannot block or modify** the notification flow. They are informational. 
-
-### Input (stdin)
-
-Notification hooks receive the common fields plus:
-
-* `message` (notification text)
-* `title` (optional)
-* `notification_type` (which type fired)
-
-Example input from the docs (title may be absent depending on event):
-
-```json
-{
-  "session_id": "abc123",
-  "transcript_path": "/Users/.../.claude/projects/.../....jsonl",
-  "cwd": "/Users/...",
-  "permission_mode": "default",
-  "hook_event_name": "Notification",
-  "message": "Claude needs your permission to use Bash",
-  "notification_type": "permission_prompt"
-}
-```
-
-This example appears in the hook reference. 
-
-### Output (stdout)
-
-Notification hooks can optionally return `additionalContext` to add a short string into Claude’s context.
-
-Structured form:
-
-```json
-{
-  "hookSpecificOutput": {
-    "hookEventName": "Notification",
-    "additionalContext": "Short context string here"
-  }
-}
-```
-
-The hook reference documents `hookSpecificOutput.additionalContext` as a way to add context, and shows it as a general pattern across events. 
-
-If you don’t want to add context, just produce no stdout and exit 0.
-
-## Reference implementation
-
-This section is copy/paste ready for a team.
-
-### settings.json
-
-This calls Linux wrappers for both events:
-
+**OR Claude CLI Config** (`~/.claude/config.json`):
 ```json
 {
   "hooks": {
-    "PermissionRequest": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/permission-review.sh",
-            "timeout": 30
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "permission_prompt|idle_prompt|auth_success|elicitation_dialog",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/notify-wrapper.sh"
-          }
-        ]
-      }
-    ]
+    "permissionRequest": {
+      "command": "/home/YOUR_USERNAME/.claude/hooks/permission-review.sh"
+    },
+    "notification": {
+      "command": "/home/YOUR_USERNAME/.claude/hooks/notify-wrapper.sh"
+    }
   }
 }
 ```
 
-Matchers for Notification types are documented in the hook reference. ([[Claude Code](https://code.claude.com/docs/fr/hooks?utm_source=chatgpt.com)][4])
+> **Important:** Replace `/home/YOUR_USERNAME` with your actual home directory path. Use `echo $HOME` to find it.
 
-### Notification wrapper (Linux/WSL)
+### Step 5: Customize Whitelist/Blacklist
 
-`~/.claude/hooks/notify-wrapper.sh`
-
-* reads stdin JSON
-* logs raw + parsed fields
-* emits a Windows toast (via `powershell.exe`)
-* optionally returns `additionalContext` (kept short)
+Edit the configuration files to match your workflow:
 
 ```bash
-#!/usr/bin/env bash
-set -euo pipefail
+# Edit whitelist
+nano ~/.claude/hooks/whitelist.txt
 
-LOG_DIR="$HOME/.claude/logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/notification.log"
-
-ts() { date -Is; }
-
-START_MS="$(date +%s%3N)"
-
-HOOK_INPUT="$(cat || true)"
-
-NOTIF_TYPE="$(echo "$HOOK_INPUT" | jq -r '.notification_type // empty' 2>/dev/null || true)"
-TITLE="$(echo "$HOOK_INPUT" | jq -r '.title // empty' 2>/dev/null || true)"
-MESSAGE="$(echo "$HOOK_INPUT" | jq -r '.message // empty' 2>/dev/null || true)"
-CWD="$(echo "$HOOK_INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
-SESSION_ID="$(echo "$HOOK_INPUT" | jq -r '.session_id // empty' 2>/dev/null || true)"
-
-[ -n "$TITLE" ] || TITLE="Claude"
-[ -n "$MESSAGE" ] || MESSAGE="Notification: ${NOTIF_TYPE:-unknown}"
-
-{
-  echo "==== $(ts) Notification hook start ===="
-  echo "session_id=$SESSION_ID"
-  echo "cwd=$CWD"
-  echo "notification_type=$NOTIF_TYPE"
-  echo "title=$TITLE"
-  echo "message=$MESSAGE"
-  echo "--- raw stdin ---"
-  echo "$HOOK_INPUT"
-  echo
-} >>"$LOG_FILE" 2>&1
-
-# Toast (WSL -> Windows)
-# BurntToast can add noticeable latency on cold start.
-powershell.exe -NoProfile -Command \
-  "Import-Module BurntToast -ErrorAction SilentlyContinue; New-BurntToastNotification -Text \"$TITLE\",\"$MESSAGE\" -AppLogo 'c:\users\damie\Pictures\claude.png'" \
-  >>"$LOG_FILE" 2>&1 || echo "[$(ts)] PowerShell toast failed" >>"$LOG_FILE"
-
-END_MS="$(date +%s%3N)"
-echo "[$(ts)] Duration ms: $((END_MS-START_MS))" >>"$LOG_FILE"
-echo "==== $(ts) Notification hook end ====" >>"$LOG_FILE"
-echo >>"$LOG_FILE"
-
-# Optional: add short context back to Claude (Notification cannot block/modify)
-if [ -n "$NOTIF_TYPE" ] && [ -n "$MESSAGE" ]; then
-  jq -n --arg t "$NOTIF_TYPE" --arg m "$MESSAGE" '{
-    "hookSpecificOutput": {
-      "hookEventName": "Notification",
-      "additionalContext": ("[notification] type=" + $t + " message=" + $m)
-    }
-  }'
-fi
-
-exit 0
+# Edit blacklist  
+nano ~/.claude/hooks/blacklist.txt
 ```
 
-Notification input fields (`message`, optional `title`, `notification_type`) and the ability to return `additionalContext` are documented in the hook reference. 
+### Step 6: Test the Installation
 
-### How to validate it works
+Restart VS Code and ask Claude to run a simple command:
 
-Run a manual stdin test (simulates Claude Code):
+```
+Can you run 'ls -la' in the terminal?
+```
+
+You should see the permission request being processed. Check the logs:
 
 ```bash
-cat <<'JSON' | ~/.claude/hooks/notify-wrapper.sh
-{
-  "session_id": "abc123",
-  "cwd": "/tmp",
-  "hook_event_name": "Notification",
-  "notification_type": "permission_prompt",
-  "title": "Permission needed",
-  "message": "Claude needs your permission to use Bash"
-}
-JSON
+cat ~/.claude/logs/permission-review.log
+cat ~/.claude/logs/permission-review.jsonl
 ```
 
-Watch logs:
+## Usage
 
+### Daily Workflow
+
+The scripts work automatically once installed. Claude's tool calls are intercepted transparently:
+
+1. **Whitelisted tools** execute immediately
+2. **Blacklisted tools** are blocked with a message
+3. **Uncertain tools** trigger AI review or manual approval
+4. **MCP write operations** always ask for confirmation
+
+### Analyzing Your Logs
+
+Run the analysis script regularly to optimize your configuration:
+
+```bash
+~/.claude/hooks/analyze-permissions.sh
+```
+
+Example output:
+```
+=== Permission Review Analysis ===
+Log file: /home/user/.claude/logs/permission-review.jsonl
+
+Total permission requests: 847
+
+--- Decision Types ---
+Whitelisted: 612
+Blacklisted: 3
+AI Reviewed: 232
+
+--- Whitelist Candidates (AI-approved ≥3 times) ---
+Write (approved 45 times)
+Edit (approved 38 times)
+Bash (approved 89 times)
+```
+
+### Manual Log Queries
+
+**Find all denied operations:**
+```bash
+jq 'select(.decision=="deny")' ~/.claude/logs/permission-review.jsonl
+```
+
+**Count approvals by tool:**
+```bash
+jq -r 'select(.decision=="approve") | .tool_name' ~/.claude/logs/permission-review.jsonl | \
+  sort | uniq -c | sort -rn
+```
+
+**Extract approved Bash commands:**
+```bash
+jq -r 'select(.tool_name=="Bash" and .decision=="approve") | .tool_input.command' \
+  ~/.claude/logs/permission-review.jsonl | head -20
+```
+
+**Find patterns for whitelist:**
+```bash
+jq -r 'select(.decision=="approve") | 
+  "\(.tool_name):\(.tool_input.command // .tool_input.file_path // "")"' \
+  ~/.claude/logs/permission-review.jsonl | \
+  grep -v ':$' | sort | uniq -c | sort -rn | head -20
+```
+
+## Configuration Details
+
+### AI Reviewer Model
+
+The AI reviewer uses Claude Opus 4.5. Change the model in `permission-review.sh`:
+
+```bash
+REVIEWER_MODEL="claude-opus-4-5-20251101"
+```
+
+### AI Review Guidelines
+
+The AI reviewer is instructed to:
+
+**APPROVE:**
+- Standard development commands (npm, git, make, cargo, etc.)
+- File operations within the project directory
+- Linters, formatters, type checkers, test suites
+- Non-destructive CLI tools
+- GET requests to known/public URLs
+
+**DENY (hard block):**
+- Accessing credentials (`~/.ssh`, `~/.aws`, API keys)
+- Exfiltrating secrets to external services
+- Mass deletion outside safe targets
+- Obfuscated commands (`base64 decode | bash`)
+- `curl | bash` patterns
+
+**ASK (manual review):**
+- Uncertain commands
+- POST requests
+- `sudo` or privilege escalation
+- Force pushing to repos
+- Destructive database operations
+
+### Pattern Matching
+
+Both whitelist and blacklist support:
+
+1. **Tool name only:** `Bash`, `Write`, `Edit`
+2. **Content patterns:** `ToolName:pattern`
+   - For `Bash`: matches against the command
+   - For `Write`/`Edit`: matches against the file path
+3. **Wildcards:** 
+   - `*` = any characters
+   - `?` = single character
+
+**Examples:**
+```bash
+# Whitelist all git commands
+Bash:git *
+
+# Whitelist npm install variants
+Bash:npm install*
+Bash:npm i*
+
+# Allow writes only in specific directories
+Write:*/src/*
+Write:*/test/*
+
+# Blacklist credential access
+Bash:*cat*~/.aws/*
+Bash:*echo*$SSH_KEY*
+```
+
+## Customization
+
+### Windows-Specific Modifications
+
+The scripts include Windows toast notifications via PowerShell. If you're not on Windows/WSL, you can:
+
+**Remove notification code** in `permission-review.sh` (around line 260):
+```bash
+# Comment out or remove this block:
+# powershell.exe -NoProfile -Command \
+#   "Import-Module BurntToast -ErrorAction SilentlyContinue; ..." \
+#   >/dev/null 2>&1 || true
+```
+
+**Or replace with Linux notification:**
+```bash
+notify-send "Claude" "Permission needs review: ${TOOL_NAME}"
+```
+
+### macOS Notifications
+
+Replace PowerShell calls with:
+```bash
+osascript -e "display notification \"${TOOL_NAME} needs review\" with title \"Claude\""
+```
+
+### Add Custom Analysis
+
+Extend `analyze-permissions.sh` with your own queries:
+
+```bash
+echo "--- Custom Analysis ---"
+jq -r 'select(.tool_name=="Bash" and .cwd | contains("production")) | 
+  .tool_input.command' "$JSON_LOG" | head -10
+```
+
+## Security Best Practices
+
+1. **Start restrictive** - Begin with a minimal whitelist and expand based on analysis
+2. **Review logs weekly** - Use `analyze-permissions.sh` to identify patterns
+3. **Never whitelist wildcards for sensitive tools** - Be specific
+4. **Monitor denied operations** - Check if legitimate operations are being blocked
+5. **Backup your logs** - The JSONL file is valuable audit data
+6. **Review blacklist patterns** - Ensure critical operations are blocked
+7. **Test changes** - After modifying whitelist/blacklist, monitor the first session carefully
+
+### Example Starter Whitelist
+
+```bash
+# Safe read-only operations
+read_file
+grep_search
+semantic_search
+file_search
+list_dir
+get_errors
+
+# Safe development commands
+Bash:git status*
+Bash:git diff*
+Bash:git log*
+Bash:npm test*
+Bash:docker ps*
+Bash:ls *
+Bash:cat *
+
+# Project-specific writes
+Write:*/src/*
+Write:*/test/*
+Edit:*/src/*
+Edit:*/test/*
+```
+
+### Example Starter Blacklist
+
+```bash
+# Credential access
+Bash:*cat*~/.aws/*
+Bash:*cat*~/.ssh/*
+Bash:*cat*.env*
+Bash:*echo*$AWS*
+Bash:*echo*$SSH*
+
+# Dangerous operations
+Bash:rm -rf /*
+Bash:sudo rm *
+Bash:curl * | bash*
+Bash:wget * | sh*
+Bash:eval *
+
+# System modifications
+Write:~/.ssh/*
+Write:/etc/*
+Edit:~/.bashrc*
+Edit:~/.zshrc*
+```
+
+## Troubleshooting
+
+### Hooks not executing
+
+**Check hook configuration:**
+```bash
+# For VS Code
+cat ~/.config/Code/User/settings.json | grep claude.hooks
+
+# For Claude CLI  
+cat ~/.claude/config.json | grep hooks
+```
+
+**Check script permissions:**
+```bash
+ls -l ~/.claude/hooks/*.sh
+# Should show -rwxr-xr-x (executable)
+```
+
+### AI reviewer failing
+
+**Check Claude CLI is installed:**
+```bash
+which claude
+claude --version
+```
+
+**Check logs for errors:**
+```bash
+tail -f ~/.claude/logs/permission-review.log
+```
+
+**Test reviewer manually:**
+```bash
+claude -p --model claude-opus-4-5-20251101 "Say hello"
+```
+
+### No notifications appearing
+
+**Windows/WSL - Check BurntToast:**
+```powershell
+Import-Module BurntToast
+New-BurntToastNotification -Text "Test", "Notification test"
+```
+
+**Check notification log:**
 ```bash
 tail -f ~/.claude/logs/notification.log
 ```
 
-### PermissionRequest output example
+### jq command not found
 
-If your security reviewer decides “allow”:
+Install jq:
+```bash
+# Ubuntu/Debian
+sudo apt update && sudo apt install jq
 
-```json
-{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}
+# macOS
+brew install jq
 ```
 
-If “deny”:
+## Advanced Usage
 
-```json
-{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Why it was denied","interrupt":true}}}
+### Multiple Whitelists for Different Projects
+
+Create project-specific whitelists:
+
+```bash
+# In permission-review.sh, add before the main whitelist check:
+PROJECT_WHITELIST="$CWD/.claude-whitelist.txt"
+if [ -f "$PROJECT_WHITELIST" ]; then
+  # Check project whitelist first
+  while IFS= read -r pattern; do
+    # ... same logic as main whitelist
+  done < "$PROJECT_WHITELIST"
+fi
 ```
 
-Behavior and optional fields are documented in PermissionRequest decision control. 
+### Temporary Whitelist Override
 
-## Operational notes for teams
+Add an environment variable check:
 
-### Keep hooks deterministic
+```bash
+# In permission-review.sh, add after variable declarations:
+if [ "${CLAUDE_SKIP_REVIEW:-}" = "1" ]; then
+  log "CLAUDE_SKIP_REVIEW set -> auto-approve"
+  exit 0
+fi
+```
 
-A hook should be deterministic and fast. If you call an LLM inside a hook (like your permission-reviewer flow), you’re trading speed for policy centralization. That can be fine, but log timings and keep timeouts tight.
+Use it:
+```bash
+CLAUDE_SKIP_REVIEW=1 code .
+```
 
-### Don’t spam additionalContext
+### Integration with CI/CD
 
-`additionalContext` is powerful but easy to abuse. Keep it short, and only include what you actually want the model to remember for the rest of the session.
+Log permission requests in CI environments:
 
-### Keep a shared log convention
+```bash
+# Add to permission-review.sh:
+if [ -n "${CI:-}" ]; then
+  echo "::warning::Claude tool request: $TOOL_NAME"
+  # Auto-approve in CI but log for review
+  exit 0
+fi
+```
 
-Recommend standardizing on:
+## Additional Resources
 
-* `~/.claude/logs/permission-review.log`
-* `~/.claude/logs/notification.log`
+- **JSON Logging Documentation:** See [JSON-LOGGING.md](hooks/JSON-LOGGING.md)
+- **Claude CLI Documentation:** `claude --help`
+- **jq Manual:** https://stedolan.github.io/jq/manual/
 
-Include timestamps, raw stdin JSON, and the final emitted JSON.
+## Contributing
 
-If you want, paste your team’s exact `settings.json` hooks section and I’ll merge these two wrappers into a single “hooks repo” layout (with a README, install steps, and a self-test script).
+To improve these scripts:
 
+1. Add new patterns to whitelist/blacklist
+2. Enhance the AI reviewer prompt
+3. Add new analysis queries to `analyze-permissions.sh`
+4. Submit cross-platform compatibility improvements
+
+## License
+
+Feel free to use, modify, and distribute these scripts as needed.
+
+## Disclaimer
+
+These scripts are security tools but not foolproof. Always review the logs and monitor Claude's actions, especially in sensitive environments. The AI reviewer is helpful but not infallible - when in doubt, it will ask for your confirmation.
+
+---
+
+**Happy coding with confidence and visibility!**
