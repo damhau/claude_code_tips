@@ -1,0 +1,52 @@
+# Whitelist for Claude Permission Hook
+# Add tool names or patterns (one per line) that should be automatically approved
+# Lines starting with # are comments and will be ignored
+# Supports bash wildcards: * (any characters), ? (single character)
+#
+# SYNTAX:
+#   ToolName              - Match tool name only
+#   ToolName:pattern      - Match tool name AND command/file content
+#
+# For Bash tools, the pattern matches against the command
+# For Write/Edit tools, the pattern matches against the file_path
+#
+# Examples - Simple tool matching:
+#   AskUserQuestion
+#   read_file
+#   grep_search
+#   semantic_search
+#   file_search
+#   list_dir
+#   get_errors
+#   Write
+#   Edit
+#
+# Examples - Content matching:
+#   Bash:docker build*
+#   Bash:docker run*
+#   Bash:git *
+#   Bash:npm *
+#   Bash:curl -s http://localhost*
+#   Write:*/test/*
+#   Edit:*/src/*.ts
+
+# Add your whitelisted tools below:
+read_file
+grep_search
+semantic_search
+file_search
+list_dir
+get_errors
+Bash:docker build*
+Bash:docker run*
+Bash:docker info*
+Bash:kubectl rollout status*
+Bash:kubectl get*
+Bash:kubectl describe*
+Bash:kubectl logs*
+Bash:kubectl -n * get*
+Bash:kubectl -n * describe*
+Bash:kubectl -n * logs*
+Bash:kubectl cluster-info*
+Bash:kubectl -n * rollout status*
+bash:kind load docker-image*
