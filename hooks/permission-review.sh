@@ -43,7 +43,7 @@ log_json() {
 
 log "---- hook start ----"
 
-REVIEWER_MODEL="claude-opus-4-5-20251101"
+REVIEWER_MODEL="opus"
 
 # --- Read stdin ---
 HOOK_INPUT=$(cat)

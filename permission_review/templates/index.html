@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Permission Review Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        [x-cloak] {
+            display: none !important;
+        }
+    </style>
+</head>
+
+<body class="bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen">
+    <div x-data="dashboardApp()" x-init="init()" class="container mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="mb-8">
+            <h1 class="text-4xl font-bold text-slate-800 mb-2">
+                <i class="fas fa-shield-alt text-blue-600"></i>
+                Permission Review Dashboard
+            </h1>
+            <p class="text-slate-600">Monitor and analyze AI permission requests</p>
+        </div>
+
+        <!-- Statistics Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-blue-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-slate-600 uppercase">Total Requests</p>
+                        <p class="text-3xl font-bold text-slate-800" x-text="stats.total">0</p>
+                    </div>
+                    <div class="bg-blue-100 rounded-full p-3">
+                        <i class="fas fa-list text-2xl text-blue-600"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-green-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-slate-600 uppercase">Approved</p>
+                        <p class="text-3xl font-bold text-slate-800"
+                            x-text="stats.decisions?.approve || stats.decisions?.allow || 0">0</p>
+                    </div>
+                    <div class="bg-green-100 rounded-full p-3">
+                        <i class="fas fa-check-circle text-2xl text-green-600"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-yellow-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-slate-600 uppercase">Asks</p>
+                        <p class="text-3xl font-bold text-slate-800" x-text="stats.decisions?.ask || 0">0</p>
+                    </div>
+                    <div class="bg-yellow-100 rounded-full p-3">
+                        <i class="fas fa-question-circle text-2xl text-yellow-600"></i>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-lg p-6 border-l-4 border-purple-500">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <p class="text-sm font-medium text-slate-600 uppercase">Total Cost</p>
+                        <p class="text-2xl font-bold text-slate-800">$<span x-text="stats.total_cost_usd || 0">0</span>
+                        </p>
+                    </div>
+                    <div class="bg-purple-100 rounded-full p-3">
+                        <i class="fas fa-dollar-sign text-2xl text-purple-600"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filters and Search -->
+        <div class="bg-white rounded-xl shadow-lg p-6 mb-8">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <!-- Search -->
+                <div class="md:col-span-2">
+                    <label class="block text-sm font-medium text-slate-700 mb-2">
+                        <i class="fas fa-search"></i> Search
+                    </label>
+                    <input type="text" x-model="filters.search" @input="loadEntries()"
+                        placeholder="Search commands, reasoning, paths..."
+                        class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                </div>
+
+                <!-- Decision Filter -->
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">
+                        <i class="fas fa-filter"></i> Decision
+                    </label>
+                    <select x-model="filters.decision" @change="loadEntries()"
+                        class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="">All</option>
+                        <option value="approve">Approve</option>
+                        <option value="allow">Allow</option>
+                        <option value="ask">Ask</option>
+                        <option value="deny">Deny</option>
+                    </select>
+                </div>
+
+                <!-- Decision Type Filter -->
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-2">
+                        <i class="fas fa-filter"></i> Type
+                    </label>
+                    <select x-model="filters.decision_type" @change="loadEntries()"
+                        class="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                        <option value="">All</option>
+                        <option value="ai_review">AI Review</option>
+                        <option value="whitelist">Whitelist</option>
+                        <option value="blacklist">Blacklist</option>
+                        <option value="manual">Manual</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Reset Filters -->
+            <div class="mt-4">
+                <button @click="resetFilters()"
+                    class="px-4 py-2 bg-slate-200 text-slate-700 rounded-lg hover:bg-slate-300 transition">
+                    <i class="fas fa-redo"></i> Reset Filters
+                </button>
+            </div>
+        </div>
+
+        <!-- Entries Table -->
+        <div class="bg-white rounded-xl shadow-lg overflow-hidden">
+            <div class="px-6 py-4 bg-gradient-to-r from-blue-600 to-blue-700 border-b">
+                <h2 class="text-xl font-bold text-white">
+                    <i class="fas fa-table"></i>
+                    Permission Requests
+                    <span class="text-blue-200 text-sm ml-2" x-text="`(${entries.length} entries)`"></span>
+                </h2>
+            </div>
+
+            <!-- Loading State -->
+            <div x-show="loading" class="p-8 text-center">
+                <i class="fas fa-spinner fa-spin text-4xl text-blue-600"></i>
+                <p class="text-slate-600 mt-4">Loading entries...</p>
+            </div>
+
+            <!-- Entries List -->
+            <div x-show="!loading" class="divide-y divide-slate-200">
+                <template x-for="entry in entries" :key="entry._id">
+                    <div class="p-6 hover:bg-slate-50 cursor-pointer transition" @click="openModal(entry)">
+                        <div class="flex items-start justify-between">
+                            <div class="flex-1">
+                                <!-- Header -->
+                                <div class="flex items-center gap-3 mb-3">
+                                    <span class="px-3 py-1 rounded-full text-xs font-semibold" :class="{
+                                            'bg-green-100 text-green-800': entry.decision === 'approve' || entry.decision === 'allow',
+                                            'bg-yellow-100 text-yellow-800': entry.decision === 'ask',
+                                            'bg-red-100 text-red-800': entry.decision === 'deny'
+                                        }" x-text="entry.decision.toUpperCase()"></span>
+                                    <span class="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-xs font-semibold"
+                                        x-text="entry.decision_type"></span>
+                                    <span
+                                        class="px-3 py-1 bg-slate-100 text-slate-800 rounded-full text-xs font-semibold">
+                                        <i class="fas fa-terminal"></i>
+                                        <span x-text="entry.tool_name"></span>
+                                    </span>
+                                    <span class="text-xs text-slate-500"
+                                        x-text="formatTimestamp(entry.timestamp)"></span>
+                                </div>
+
+                                <!-- Command -->
+                                <div class="mb-2">
+                                    <span class="text-xs font-medium text-slate-500">COMMAND:</span>
+                                    <pre class="bg-slate-900 text-green-400 p-3 rounded-lg mt-1 text-sm overflow-x-auto font-mono"
+                                        x-text="entry.tool_input?.command || 'N/A'"></pre>
+                                </div>
+
+                                <!-- Description -->
+                                <div class="mb-2" x-show="entry.tool_input?.description">
+                                    <span class="text-xs font-medium text-slate-500">DESCRIPTION:</span>
+                                    <p class="text-slate-700 mt-1" x-text="entry.tool_input?.description"></p>
+                                </div>
+
+                                <!-- CWD -->
+                                <div class="mb-2">
+                                    <span class="text-xs font-medium text-slate-500">WORKING DIR:</span>
+                                    <code class="text-sm text-slate-700 ml-2" x-text="entry.cwd"></code>
+                                </div>
+
+                                <!-- Reasoning -->
+                                <div class="bg-slate-50 p-3 rounded-lg mt-3">
+                                    <span class="text-xs font-medium text-slate-500"><i class="fas fa-lightbulb"></i>
+                                        REASONING:</span>
+                                    <p class="text-slate-700 mt-1 text-sm" x-text="entry.reasoning"></p>
+                                </div>
+
+                                <!-- Cost (if available) -->
+                                <div x-show="entry.reviewer_output_parsed?.total_cost_usd" class="mt-2">
+                                    <span class="text-xs font-medium text-purple-600">
+                                        <i class="fas fa-dollar-sign"></i>
+                                        Cost: $<span
+                                            x-text="entry.reviewer_output_parsed?.total_cost_usd?.toFixed(6) || '0'"></span>
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Click to expand indicator -->
+                            <div class="ml-4">
+                                <i class="fas fa-chevron-right text-slate-400"></i>
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Empty State -->
+                <div x-show="entries.length === 0 && !loading" class="p-12 text-center">
+                    <i class="fas fa-inbox text-6xl text-slate-300 mb-4"></i>
+                    <p class="text-slate-600 text-lg">No entries found</p>
+                    <p class="text-slate-500 text-sm">Try adjusting your filters</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal for Entry Details -->
+        <div x-show="selectedEntry !== null" x-cloak
+            class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+            @click.self="closeModal()">
+            <div class="bg-white rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <div
+                    class="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4 flex items-center justify-between">
+                    <h3 class="text-xl font-bold text-white">
+                        <i class="fas fa-info-circle"></i> Entry Details
+                    </h3>
+                    <button @click="closeModal()" class="text-white hover:text-slate-200 transition">
+                        <i class="fas fa-times text-2xl"></i>
+                    </button>
+                </div>
+
+                <div x-show="selectedEntry" class="p-6">
+                    <!-- Badges -->
+                    <div class="flex items-center gap-3 mb-6">
+                        <span class="px-4 py-2 rounded-lg text-sm font-semibold" :class="{
+                                'bg-green-100 text-green-800': selectedEntry?.decision === 'approve' || selectedEntry?.decision === 'allow',
+                                'bg-yellow-100 text-yellow-800': selectedEntry?.decision === 'ask',
+                                'bg-red-100 text-red-800': selectedEntry?.decision === 'deny'
+                            }" x-text="selectedEntry?.decision?.toUpperCase()"></span>
+                        <span class="px-4 py-2 bg-blue-100 text-blue-800 rounded-lg text-sm font-semibold"
+                            x-text="selectedEntry?.decision_type"></span>
+                    </div>
+
+                    <!-- Metadata -->
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="bg-slate-50 p-4 rounded-lg">
+                            <span class="text-xs font-medium text-slate-500">TIMESTAMP</span>
+                            <p class="text-slate-800 mt-1" x-text="selectedEntry?.timestamp"></p>
+                        </div>
+                        <div class="bg-slate-50 p-4 rounded-lg">
+                            <span class="text-xs font-medium text-slate-500">TOOL</span>
+                            <p class="text-slate-800 mt-1" x-text="selectedEntry?.tool_name"></p>
+                        </div>
+                        <div class="bg-slate-50 p-4 rounded-lg col-span-2">
+                            <span class="text-xs font-medium text-slate-500">WORKING DIRECTORY</span>
+                            <code class="text-slate-800 mt-1 block" x-text="selectedEntry?.cwd"></code>
+                        </div>
+                    </div>
+
+                    <!-- Command -->
+                    <div class="mb-6">
+                        <h4 class="text-sm font-semibold text-slate-700 mb-2">COMMAND</h4>
+                        <pre class="bg-slate-900 text-green-400 p-4 rounded-lg overflow-x-auto font-mono text-sm"
+                            x-text="selectedEntry?.tool_input?.command"></pre>
+                    </div>
+
+                    <!-- Description -->
+                    <div x-show="selectedEntry?.tool_input?.description" class="mb-6">
+                        <h4 class="text-sm font-semibold text-slate-700 mb-2">DESCRIPTION</h4>
+                        <p class="text-slate-700" x-text="selectedEntry?.tool_input?.description"></p>
+                    </div>
+
+                    <!-- Reasoning -->
+                    <div class="mb-6">
+                        <h4 class="text-sm font-semibold text-slate-700 mb-2">
+                            <i class="fas fa-lightbulb text-yellow-500"></i> REASONING
+                        </h4>
+                        <div class="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+                            <p class="text-slate-700" x-text="selectedEntry?.reasoning"></p>
+                        </div>
+                    </div>
+
+                    <!-- AI Review Details -->
+                    <div x-show="selectedEntry?.reviewer_output_parsed && Object.keys(selectedEntry?.reviewer_output_parsed || {}).length > 0"
+                        class="mb-6">
+                        <h4 class="text-sm font-semibold text-slate-700 mb-3">
+                            <i class="fas fa-robot text-blue-500"></i> AI REVIEW DETAILS
+                        </h4>
+
+                        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                            <div class="bg-purple-50 p-3 rounded-lg">
+                                <span class="text-xs font-medium text-purple-700">COST</span>
+                                <p class="text-lg font-bold text-purple-900">$<span
+                                        x-text="selectedEntry?.reviewer_output_parsed?.total_cost_usd?.toFixed(6) || '0'"></span>
+                                </p>
+                            </div>
+                            <div class="bg-blue-50 p-3 rounded-lg">
+                                <span class="text-xs font-medium text-blue-700">DURATION</span>
+                                <p class="text-lg font-bold text-blue-900"><span
+                                        x-text="selectedEntry?.reviewer_output_parsed?.duration_ms || '0'"></span>ms</p>
+                            </div>
+                            <div class="bg-green-50 p-3 rounded-lg">
+                                <span class="text-xs font-medium text-green-700">INPUT TOKENS</span>
+                                <p class="text-lg font-bold text-green-900"
+                                    x-text="selectedEntry?.reviewer_output_parsed?.usage?.input_tokens || '0'"></p>
+                            </div>
+                            <div class="bg-orange-50 p-3 rounded-lg">
+                                <span class="text-xs font-medium text-orange-700">OUTPUT TOKENS</span>
+                                <p class="text-lg font-bold text-orange-900"
+                                    x-text="selectedEntry?.reviewer_output_parsed?.usage?.output_tokens || '0'"></p>
+                            </div>
+                        </div>
+
+                        <!-- Full JSON -->
+                        <details class="bg-slate-50 p-4 rounded-lg">
+                            <summary class="cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                                <i class="fas fa-code"></i> View Full JSON
+                            </summary>
+                            <pre class="mt-3 bg-slate-900 text-green-400 p-4 rounded-lg overflow-x-auto text-xs font-mono"
+                                x-text="JSON.stringify(selectedEntry, null, 2)"></pre>
+                        </details>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function dashboardApp() {
+            return {
+                stats: {},
+                entries: [],
+                loading: false,
+                selectedEntry: null,
+                filters: {
+                    search: '',
+                    decision: '',
+                    decision_type: '',
+                    tool: ''
+                },
+
+                async init() {
+                    await this.loadStats();
+                    await this.loadEntries();
+                },
+
+                async loadStats() {
+                    try {
+                        const response = await fetch('/api/stats');
+                        this.stats = await response.json();
+                    } catch (error) {
+                        console.error('Error loading stats:', error);
+                    }
+                },
+
+                async loadEntries() {
+                    this.loading = true;
+                    try {
+                        const params = new URLSearchParams();
+                        if (this.filters.search) params.append('search', this.filters.search);
+                        if (this.filters.decision) params.append('decision', this.filters.decision);
+                        if (this.filters.decision_type) params.append('decision_type', this.filters.decision_type);
+                        if (this.filters.tool) params.append('tool', this.filters.tool);
+
+                        const response = await fetch(`/api/entries?${params}`);
+                        this.entries = await response.json();
+                    } catch (error) {
+                        console.error('Error loading entries:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                resetFilters() {
+                    this.filters = {
+                        search: '',
+                        decision: '',
+                        decision_type: '',
+                        tool: ''
+                    };
+                    this.loadEntries();
+                },
+
+                openModal(entry) {
+                    this.selectedEntry = entry;
+                },
+
+                closeModal() {
+                    this.selectedEntry = null;
+                },
+
+                formatTimestamp(timestamp) {
+                    if (!timestamp) return 'N/A';
+                    const date = new Date(timestamp);
+                    return date.toLocaleString();
+                }
+            };
+        }
+    </script>
+</body>
+
+</html>

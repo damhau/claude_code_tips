@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  permission-review:
+    build: .
+    container_name: permission-review-dashboard
+    ports:
+      - "8080:5000"
+    volumes:
+      # Mount your Claude logs directory
+      - ~/.claude/logs:/root/.claude/logs:ro
+    restart: unless-stopped
+    environment:
+      - FLASK_ENV=production

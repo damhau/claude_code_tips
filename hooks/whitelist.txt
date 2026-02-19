@@ -50,3 +50,4 @@ Bash:kubectl -n * logs*
 Bash:kubectl cluster-info*
 Bash:kubectl -n * rollout status*
 bash:kind load docker-image*
+bash:wc -l*

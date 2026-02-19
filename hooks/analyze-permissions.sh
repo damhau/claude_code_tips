@@ -20,22 +20,22 @@ echo ""
 
 # Count by decision type
 echo "--- Decision Types ---"
-echo -n "Whitelisted: "
-grep -c '"decision_type":"whitelist"' "$JSON_LOG" || echo 0
-echo -n "Blacklisted: "
-grep -c '"decision_type":"blacklist"' "$JSON_LOG" || echo 0
-echo -n "AI Reviewed: "
-grep -c '"decision_type":"ai_review"' "$JSON_LOG" || echo 0
+WHITELIST_COUNT=$(jq -r 'select(.decision_type=="whitelist")' "$JSON_LOG" 2>/dev/null | wc -l | tr -d ' ')
+BLACKLIST_COUNT=$(jq -r 'select(.decision_type=="blacklist")' "$JSON_LOG" 2>/dev/null | wc -l | tr -d ' ')
+AI_REVIEW_COUNT=$(jq -r 'select(.decision_type=="ai_review")' "$JSON_LOG" 2>/dev/null | wc -l | tr -d ' ')
+echo "Whitelisted: $WHITELIST_COUNT"
+echo "Blacklisted: $BLACKLIST_COUNT"
+echo "AI Reviewed: $AI_REVIEW_COUNT"
 echo ""
 
 # Count AI review decisions
 echo "--- AI Review Decisions ---"
-echo -n "Approved: "
-jq -r 'select(.decision_type=="ai_review") | select(.decision=="approve")' "$JSON_LOG" | wc -l
-echo -n "Denied: "
-jq -r 'select(.decision_type=="ai_review") | select(.decision=="deny")' "$JSON_LOG" | wc -l
-echo -n "Asked (manual): "
-jq -r 'select(.decision_type=="ai_review") | select(.decision=="ask")' "$JSON_LOG" | wc -l
+APPROVED_COUNT=$(jq -r 'select(.decision_type=="ai_review") | select(.decision=="approve")' "$JSON_LOG" 2>/dev/null | wc -l | tr -d ' ')
+DENIED_COUNT=$(jq -r 'select(.decision_type=="ai_review") | select(.decision=="deny")' "$JSON_LOG" 2>/dev/null | wc -l | tr -d ' ')
+ASKED_COUNT=$(jq -r 'select(.decision_type=="ai_review") | select(.decision=="ask")' "$JSON_LOG" 2>/dev/null | wc -l | tr -d ' ')
+echo "Approved: $APPROVED_COUNT"
+echo "Denied: $DENIED_COUNT"
+echo "Asked (manual): $ASKED_COUNT"
 echo ""
 
 # Most common tools
